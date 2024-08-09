@@ -27,9 +27,11 @@ rand_new = { package = "rand", version = "0.8" }
 hex = "0.4"
 seq-macro = "0.3"
 
-zkevm_opcode_defs = "=0.150.0"
-cs_derive = "=0.2.2"
-boojum = "=0.2.2"
+zkevm_opcode_defs = {git = "https://github.com/matter-labs/era-zkevm_opcode_defs.git", branch = "v1.5.0"}
+cs_derive = { git = "https://github.com/matter-labs/era-boojum.git", branch = "main" }
+# boojum = "=0.2.2"
+boojum = {git = "https://github.com/antoniolocascio/era-boojum.git", branch = "oo"}
+# packed_simd = "0.3.9"
 
 [features]
 default = []

@@ -823,4 +823,133 @@ mod tests {
 
         unsorted_querie
     }
+    
+    #[test]
+    fn test_demultiplex_storage_logs_inner_analyzer() {
+        let geometry = CSGeometry {
+            num_columns_under_copy_permutation: 100,
+            num_witness_columns: 0,
+            num_constant_columns: 8,
+            max_allowed_constraint_degree: 4,
+        };
+
+        use boojum::cs::cs_builder::*;
+
+        fn configure<
+            T: CsBuilderImpl<F, T>,
+            GC: GateConfigurationHolder<F>,
+            TB: StaticToolboxHolder,
+        >(
+            builder: CsBuilder<T, F, GC, TB>,
+        ) -> CsBuilder<T, F, impl GateConfigurationHolder<F>, impl StaticToolboxHolder> {
+            let builder = builder.allow_lookup(
+                LookupParameters::UseSpecializedColumnsWithTableIdAsConstant {
+                    width: 3,
+                    num_repetitions: 8,
+                    share_table_id: true,
+                },
+            );
+            let builder = ConstantsAllocatorGate::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+            );
+            let builder = FmaGateInBaseFieldWithoutConstant::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+            );
+            let builder = ReductionGate::<F, 4>::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+            );
+            let builder = BooleanConstraintGate::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+            );
+            let builder = UIntXAddGate::<32>::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+            );
+            let builder = UIntXAddGate::<16>::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+            );
+            let builder = SelectionGate::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+            );
+            let builder = ZeroCheckGate::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+                false,
+            );
+            let builder = DotProductGate::<4>::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+            );
+            let builder = MatrixMultiplicationGate::<F, 12, Poseidon2GoldilocksExternalMatrix>::configure_builder(builder,GatePlacementStrategy::UseGeneralPurposeColumns);
+            let builder = NopGate::configure_builder(
+                builder,
+                GatePlacementStrategy::UseGeneralPurposeColumns,
+            );
+
+            builder
+        }
+
+        use boojum::config::DevCSConfig;
+        use boojum::cs::cs_builder_reference::CsReferenceImplementationBuilder;
+
+        let builder_impl =
+            CsReferenceImplementationBuilder::<F, P, DevCSConfig>::new(geometry, 1 << 20);
+        use boojum::cs::cs_builder::new_builder;
+        let builder = new_builder::<_, F>(builder_impl);
+
+        let builder = configure(builder);
+        let mut owned_cs = builder.build(1 << 26);
+
+        // add tables
+        let table = create_xor8_table();
+        owned_cs.add_lookup_table::<Xor8Table, 3>(table);
+
+        let cs = &mut owned_cs;
+
+        // start test
+        let execute = Boolean::allocated_constant(cs, true);
+
+        let mut storage_log_queue = StorageLogQueue::<F, Poseidon2Goldilocks>::empty(cs);
+        let unsorted_input = witness_input_unsorted(cs);
+        let mut inputs = vec![];
+        for el in unsorted_input {
+            storage_log_queue.push(cs, el, execute);
+            inputs.push(el.flatten_as_variables_impl())
+        }
+
+        let mut output = std::array::from_fn(|_| StorageLogQueue::empty(cs));
+        let limit = 16;
+        demultiplex_storage_logs_inner(cs, &mut storage_log_queue, &mut output, limit);
+
+
+        let mut outputs = vec![];
+        for el in output {
+            outputs.extend_from_slice(&el.head);
+            outputs.extend_from_slice(&el.tail);
+        }
+
+        let cs = &mut owned_cs;
+        let gates = cs.get_gate_reprs();
+        let witness_size = cs.get_witness_size();
+
+        // log!("Inputs: {:?}", inputs);
+        // log!("Outputs: {:?}", outputs);
+        let flattened_inputs: Vec<Variable> = inputs.iter().flatten().cloned().collect();
+        let flattened_outputs: Vec<Variable> = outputs.iter().map(|x| x.get_variable()).collect();
+        let ignored_variables = cs.get_ignored_variables();
+        run_analysis(gates, &flattened_inputs, &flattened_outputs, witness_size, ignored_variables);
+
+        cs.pad_and_shrink();
+        let worker = Worker::new();
+        let mut owned_cs = owned_cs.into_assembly::<std::alloc::Global>();
+        owned_cs.print_gate_stats();
+        assert!(owned_cs.check_if_satisfied(&worker));
+
+    }
 }
